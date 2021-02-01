@@ -58,7 +58,7 @@ class TSFM(object):
                 # date_generator = DateGenerator(start_date=max(self.train[self.columns[0]]))
                 temp_pred_df = pd.DataFrame(
                     data={
-                        self.columns[0]: pd.date_range(max(temp_train_df[self.columns[0]]),freq='MS',periods=self.n_pred_period+1)[1:],
+                        self.columns[0]: pd.date_range(max(temp_train_df.index),freq='MS',periods=self.n_pred_period+1)[1:],
                         self.columns[1]: [section for x in range(len(pred))],
                         self.columns[-1]: pred})  # Use numbers inplace of future dates for now)
                 self.pred = self.pred.append(temp_pred_df, ignore_index=True)
@@ -90,4 +90,15 @@ class TSFM(object):
             return_df = return_df.append(pred, ignore_index=True)
         return_df.sort_values(by=[self.columns[1], self.columns[0]], inplace=True, ignore_index=True)
         return return_df
+
+    def plot(self, section: str):
+        [train_df, pred_df] = self.df_dict[section]
+        fig, ax = plt.subplots(figsize=(12, 7))
+        fig.suptitle("Prediction at " + self.columns[1] + " level (" + section +  ")")
+        ax.set_xlabel("Periods")
+        ax.set_ylabel(self.columns[-1])
+        train_df.plot(ax=ax, marker='o')
+        pred_df.plot(ax=ax, marker='o')
+        ax.legend(["train", "prediction"])
+        plt.show()
 

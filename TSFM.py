@@ -28,9 +28,10 @@ class TSFM(object):
             value_variable = train.columns[value_variable]
         # Select relevant columns for train and test df, create empty pred df
         self.columns = [date_variable, target_variable, value_variable]
-        print(train)
-        self.train = train[self.columns].groupby(
-            self.columns[0:2], as_index=False).sum()
+
+        train[self.columns[0]] = pd.to_datetime(train[self.columns[0]])
+
+        self.train = train
         self.pred = pd.DataFrame(columns=self.columns)
 
         # keys: sections(territories), value: list(train, test, pred), for easy storing and fetching data
@@ -44,10 +45,7 @@ class TSFM(object):
         for section in self.section_list:
             print("Inspecting", section, "...")
             # Query data for one selected section
-            temp_train_df = self.train.query(
-                self.columns[1] + "==" + "'" + section + "'")[[self.columns[0], self.columns[2]]]
-            temp_train_df.set_index(date_variable, inplace=True)
-            temp_train_df = TSFM.to_monthly(temp_train_df)
+            temp_train_df = self.get_train_data(section=section)
             if temp_train_df.shape[0] >= 2 * cycle_length:
                 if do_anomaly_filter:
                     temp_train_df = self.anomaly_filter(temp_train_df, alpha=alpha)
@@ -62,21 +60,33 @@ class TSFM(object):
                                                 max_d=2, max_D=2,
                                                 max_q=2, max_Q=2,
                                                 trace=True, m=cycle_length)
-                pred = arima_model.predict(self.n_pred_period)
-                # date_generator = DateGenerator(start_date=max(self.train[self.columns[0]]))
-                temp_pred_df = pd.DataFrame(
-                    data={
-                        self.columns[0]: pd.date_range(max(temp_train_df.index),freq='MS',periods=self.n_pred_period+1)[1:],
-                        self.columns[1]: [section for x in range(len(pred))],
-                        self.columns[-1]: pred})  # Use numbers inplace of future dates for now)
-                self.pred = self.pred.append(temp_pred_df, ignore_index=True)
-                temp_pred_df = temp_pred_df[[self.columns[0], self.columns[2]]]
-                temp_pred_df.set_index(date_variable, inplace=True)
-                self.df_dict[section] = [temp_train_df, temp_pred_df]
                 self.model_dict[section] = arima_model
             else:
                 print("Number of data points in Section", section, "is too small (" + str(
                     temp_train_df.shape[0]) + ". Must be at least twice the declared cycle length.")
+
+    def get_train_data(self, section: str,):
+        agg_df = self.train[self.columns].groupby(self.columns[0:2], as_index=False).sum()
+        agg_df = agg_df.query(self.columns[1] + "==" + "'" + section + "'")[[self.columns[0], self.columns[2]]]
+        agg_df.set_index(self.columns[0], inplace=True)
+        agg_df = TSFM.to_monthly(agg_df)
+        return agg_df
+
+    def get_pred_data(self, section: str, train_end_date):
+        train_df = self.get_train_data(section)
+        model = self.model_dict[section]
+        pred = model.predict(self.n_pred_period)
+        # date_generator = DateGenerator(start_date=max(self.train[self.columns[0]]))
+        temp_pred_df = pd.DataFrame(
+            data={
+                self.columns[0]: pd.date_range(max(train_df.index),freq='MS',periods=self.n_pred_period+1)[1:],
+                self.columns[1]: [section for x in range(len(pred))],
+                self.columns[-1]: pred})  # Use numbers inplace of future dates for now)
+        self.pred = self.pred.append(temp_pred_df, ignore_index=True)
+        temp_pred_df = temp_pred_df[[self.columns[0], self.columns[2]]]
+        temp_pred_df.set_index(self.columns[0], inplace=True)
+        return 
+
 
     def plot(self, section: str):
         [train_df, pred_df] = self.df_dict[section]
@@ -199,31 +209,14 @@ class TSFM(object):
                 train = train.append(df.iloc[train.shape[0]:])
         return train
 
-
-
-    
-        # for i in range(inspecting_df.shape[0]):
-        #     inspecting_value = inspecting_df[inspecting_df.columns[0]][i]
-        #     print("inspecting_value = {}".format(inspecting_value))
-        #     arima_model = pmdarima.auto_arima(train[train.columns[0]],
-        #                                         start_p=0, start_P=0,
-        #                                         start_q=0, start_Q=0,
-        #                                         d=1, D=1,
-        #                                         max_p=4, max_P=2,
-        #                                         max_d=2, max_D=2,
-        #                                         max_q=2, max_Q=2,
-        #                                         trace=True, m=self.cycle_length)
-        #     pred, conf_int = arima_model.predict(n_periods=1, return_conf_int=True)
-        #     pred, conf_int = pred[0], conf_int[0]
-        #     if inspecting_value < conf_int[0]:
-        #         temp_pred_df = pd.DataFrame(
-        #             data={train.columns[0]: [pred]}, index=pd.date_range(max(train.index),freq='MS',periods=2)[1:])
-        #     else:
-        #         temp_pred_df = pd.DataFrame(
-        #             data={train.columns[0]: [inspecting_value]}, index=pd.date_range(max(train.index),freq='MS',periods=2)[1:])
-        #     train = train.append(temp_pred_df)
-        # return train
+    def __column_type_validate(self, column: str, dtypes: list):
+        if self.train.dtypes[column] in dtypes:
+            return
+        raise TypeError("Invalid dtype for column", column, ".")
 
     @classmethod
     def to_monthly(cls, df: pd.core.frame.DataFrame) -> pd.core.frame.DataFrame:
         return df.resample('MS').sum()
+
+    
+    

@@ -72,7 +72,7 @@ class TSFM(object):
         agg_df = TSFM.to_monthly(agg_df)
         return agg_df
 
-    def get_pred_data(self, section: str, train_end_date):
+    def get_pred_data(self, section: str):
         train_df = self.get_train_data(section)
         model = self.model_dict[section]
         pred = model.predict(self.n_pred_period)
@@ -85,11 +85,12 @@ class TSFM(object):
         self.pred = self.pred.append(temp_pred_df, ignore_index=True)
         temp_pred_df = temp_pred_df[[self.columns[0], self.columns[2]]]
         temp_pred_df.set_index(self.columns[0], inplace=True)
-        return 
+        return temp_pred_df
 
 
     def plot(self, section: str):
-        [train_df, pred_df] = self.df_dict[section]
+        train_df = self.get_train_data(section)
+        pred_df = self.get_pred_data(section)
         fig, ax = plt.subplots(figsize=(12, 7))
         fig.suptitle("Prediction at " + self.columns[1] + " level (" + section +  ")")
         ax.set_xlabel("Periods")
@@ -209,10 +210,10 @@ class TSFM(object):
                 train = train.append(df.iloc[train.shape[0]:])
         return train
 
-    def __column_type_validate(self, column: str, dtypes: list):
-        if self.train.dtypes[column] in dtypes:
-            return
-        raise TypeError("Invalid dtype for column", column, ".")
+    # def __column_type_validate(self, column: str, dtypes: list):
+    #     if self.train.dtypes[column] in dtypes:
+    #         return
+    #     raise TypeError("Invalid dtype for column", column, ".")
 
     @classmethod
     def to_monthly(cls, df: pd.core.frame.DataFrame) -> pd.core.frame.DataFrame:

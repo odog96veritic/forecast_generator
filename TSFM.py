@@ -6,18 +6,19 @@ import pmdarima
 import datetime
 import typing
 from matplotlib import pyplot as plt
+import matplotlib.dates as mdates
 
 ## Changes to be made
 ## 1 would like to add an argument 
 
 class TSFM(object):
     def __init__(self,
-                 train: pd.core.frame.DataFrame,
-                 target_variable: str,
+                 df: pd.core.frame.DataFrame,
                  n_pred_period: int,
-                 stop_date: str = None,         ### adding a stop date
-                 date_variable: typing.Union[int, str] = 0,
-                 value_variable: typing.Union[int, str] = -1,
+                 date_variable: typing.Union[int, str],
+                 value_variable: typing.Union[int, str],
+                 target_variable: str,
+                 stop_date: str = None,         # stop date of train set, to split df to train and test sets
                  section_list: list = None,
                  cycle_length: int = 12,
                  do_anomaly_filter : bool = True,
@@ -28,14 +29,14 @@ class TSFM(object):
         self.cycle_length = cycle_length
         # train and test df must have date as index, and 2 columns: sections(e.g. territory) and values(e.g. order_volume)
         if type(date_variable) is int:
-            date_variable = train.columns[date_variable]
+            date_variable = df.columns[date_variable]
         if type(value_variable) is int:
-            value_variable = train.columns[value_variable]
+            value_variable = df.columns[value_variable]
         # Select relevant columns for train and test df, create empty pred df
         self.columns = [date_variable, target_variable, value_variable]
-        train[self.columns[0]] = pd.to_datetime(train[self.columns[0]])
+        df[self.columns[0]] = pd.to_datetime(df[self.columns[0]])
 
-        self.train = train
+        self.df = df
         self.pred = pd.DataFrame(columns=self.columns)
 
         # keys: sections(territories), value: list(train, test, pred), for easy storing and fetching data
@@ -45,11 +46,11 @@ class TSFM(object):
         # Iterate through the unique sections
         self.section_list = section_list
         if self.section_list is None:
-            self.section_list = train[target_variable].unique()
+            self.section_list = df[target_variable].unique()
         for section in self.section_list:
             print("Inspecting", section, "...")
             # Query data for one selected section
-            temp_train_df = self.get_train_data(section=section,stop_date=stop_date)
+            temp_train_df = self.get_train_data(section=section)
             if temp_train_df.shape[0] >= 2 * cycle_length:
                 if do_anomaly_filter:
                     temp_train_df = self.anomaly_filter(temp_train_df, alpha=alpha)
@@ -68,22 +69,32 @@ class TSFM(object):
             else:
                 print("Number of data points in Section", section, "is too small (" + str(
                     temp_train_df.shape[0]) + ". Must be at least twice the declared cycle length.")
+    def get_actual_data(self, section: str):
+            agg_df = self.df[self.columns].groupby(self.columns[0:2], as_index=False).sum()
+            agg_df = agg_df.query(self.columns[1] + "==" + "'" + section + "'")[[self.columns[0], self.columns[2]]]
+            agg_df.set_index(self.columns[0], inplace=True)
+            agg_df = TSFM.to_monthly(agg_df)
+            return agg_df
 
-    def get_train_data(self, section: str, stop_date: str = None):  ## added stop date
-        agg_df = self.train[self.columns].groupby(self.columns[0:2], as_index=False).sum()
-        agg_df = agg_df.query(self.columns[1] + "==" + "'" + section + "'")[[self.columns[0], self.columns[2]]]
-        ## added logic below to cut out training section
-        if stop_date is not None:
-            agg_df = agg_df.query(self.columns[0] + "<=" +"'" + stop_date+ "'" )[[self.columns[0], self.columns[2]]]
-            print('stop_date is',agg_df[self.columns[0]].max())
-        agg_df.set_index(self.columns[0], inplace=True)
-        agg_df = TSFM.to_monthly(agg_df)
-        return agg_df
+    def get_train_data(self, section: str,):  ## added stop date
+        actual_df = self.get_actual_data(section)
+        if self.stop_date is None:
+            return actual_df
+        return actual_df.iloc[lambda x: x.index <= self.stop_date]
 
-    def get_pred_data(self, section: str):
+    def get_test_data(self, section: str,):
+        actual_df = self.get_actual_data(section)
+        if self.stop_date is None:
+            return actual_df
+        return actual_df.iloc[lambda x: x.index > self.stop_date]
+
+    
+
+    def get_pred_data(self, section: str, return_conf_int: bool = False):
         train_df = self.get_train_data(section)
         model = self.model_dict[section]
-        pred = model.predict(self.n_pred_period)
+        pred, conf_int = model.predict(self.n_pred_period, return_conf_int=return_conf_int)
+            
         # date_generator = DateGenerator(start_date=max(self.train[self.columns[0]]))
         temp_pred_df = pd.DataFrame(
             data={
@@ -93,40 +104,25 @@ class TSFM(object):
         self.pred = self.pred.append(temp_pred_df, ignore_index=True)
         temp_pred_df = temp_pred_df[[self.columns[0], self.columns[2]]]
         temp_pred_df.set_index(self.columns[0], inplace=True)
-        return temp_pred_df
-
-
+        return temp_pred_df, conf_int
+    
     def plot(self, section: str):
-        train_df = self.get_train_data(section)
-        pred_df = self.get_pred_data(section)
-        fig, ax = plt.subplots(figsize=(12, 7))
-        fig.suptitle("Prediction at " + self.columns[1] + " level (" + section +  ")")
-        ax.set_xlabel("Periods")
-        ax.set_ylabel(self.columns[-1])
-        train_df.plot(ax=ax, marker='o')
-        pred_df.plot(ax=ax, marker='o')
-        ax.legend(["train", "prediction"])
+        actual = self.get_actual_data(section)
+        pred, ci = self.get_pred_data(section, return_conf_int=True)
+        fig, ax = plt.subplots(figsize=(14,6))
+        ax.plot(actual.index, actual[actual.columns[0]],label="Actual")   #Actuals This should come from original DS (all actuals)
+        ax.plot(pred.index, pred[pred.columns[0]], '-r',alpha=0.75,label="Forecast")  ## Pred
+        ax.fill_between(pred.index, ci[:, 0], ci[:, 1],alpha=0.3, color='b')  ## Conf intervals
+        plt.title('Forecast Model')
+        plt.xlabel('Year')
+        plt.ylabel('Forecast Accurary')
+
+        ax.xaxis.set_major_locator(mdates.YearLocator())
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
+        ax.xaxis.set_minor_locator(mdates.MonthLocator())
+
+        plt.legend()
         plt.show()
-
-    def get_df(self):
-        return_df = self.train
-        for section in self.section_list:
-            pred = pd.DataFrame.copy(self.df_dict[section][1])
-            pred.reset_index(inplace=True)
-            pred[self.target_variable] = [section for x in range(pred.shape[0])]
-            return_df = return_df.append(pred, ignore_index=True)
-        return_df.sort_values(by=[self.columns[1], self.columns[0]], inplace=True, ignore_index=True)
-        return return_df
-
-    def get_pred_df(self):
-        return_df = pd.DataFrame(columns=self.columns)
-        for section in self.section_list:
-            pred = pd.DataFrame.copy(self.df_dict[section][1])
-            pred.reset_index(inplace=True)
-            pred[self.target_variable] = [section for x in range(pred.shape[0])]
-            return_df = return_df.append(pred, ignore_index=True)
-        return_df.sort_values(by=[self.columns[1], self.columns[0]], inplace=True, ignore_index=True)
-        return return_df
 
     # def is_anomalous(self, section: str, actual_value: float, date: datetime.datetime):
     #     model = self.model_dict[section]
@@ -217,11 +213,6 @@ class TSFM(object):
                 print("No Anomaly spotted, appending the rest of the data")
                 train = train.append(df.iloc[train.shape[0]:])
         return train
-
-    # def __column_type_validate(self, column: str, dtypes: list):
-    #     if self.train.dtypes[column] in dtypes:
-    #         return
-    #     raise TypeError("Invalid dtype for column", column, ".")
 
     @classmethod
     def to_monthly(cls, df: pd.core.frame.DataFrame) -> pd.core.frame.DataFrame:

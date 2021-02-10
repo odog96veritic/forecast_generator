@@ -7,11 +7,15 @@ import datetime
 import typing
 from matplotlib import pyplot as plt
 
+## Changes to be made
+## 1 would like to add an argument 
+
 class TSFM(object):
     def __init__(self,
                  train: pd.core.frame.DataFrame,
                  target_variable: str,
                  n_pred_period: int,
+                 stop_date: str = None,         ### adding a stop date
                  date_variable: typing.Union[int, str] = 0,
                  value_variable: typing.Union[int, str] = -1,
                  section_list: list = None,
@@ -20,6 +24,7 @@ class TSFM(object):
                  alpha: float = 0.05,):
         self.target_variable = target_variable
         self.n_pred_period = n_pred_period
+        self.stop_date = stop_date
         self.cycle_length = cycle_length
         # train and test df must have date as index, and 2 columns: sections(e.g. territory) and values(e.g. order_volume)
         if type(date_variable) is int:
@@ -28,7 +33,6 @@ class TSFM(object):
             value_variable = train.columns[value_variable]
         # Select relevant columns for train and test df, create empty pred df
         self.columns = [date_variable, target_variable, value_variable]
-
         train[self.columns[0]] = pd.to_datetime(train[self.columns[0]])
 
         self.train = train
@@ -45,7 +49,7 @@ class TSFM(object):
         for section in self.section_list:
             print("Inspecting", section, "...")
             # Query data for one selected section
-            temp_train_df = self.get_train_data(section=section)
+            temp_train_df = self.get_train_data(section=section,stop_date=stop_date)
             if temp_train_df.shape[0] >= 2 * cycle_length:
                 if do_anomaly_filter:
                     temp_train_df = self.anomaly_filter(temp_train_df, alpha=alpha)
@@ -65,9 +69,13 @@ class TSFM(object):
                 print("Number of data points in Section", section, "is too small (" + str(
                     temp_train_df.shape[0]) + ". Must be at least twice the declared cycle length.")
 
-    def get_train_data(self, section: str,):
+    def get_train_data(self, section: str, stop_date: str = None):  ## added stop date
         agg_df = self.train[self.columns].groupby(self.columns[0:2], as_index=False).sum()
         agg_df = agg_df.query(self.columns[1] + "==" + "'" + section + "'")[[self.columns[0], self.columns[2]]]
+        ## added logic below to cut out training section
+        if stop_date is not None:
+            agg_df = agg_df.query(self.columns[0] + "<=" +"'" + stop_date+ "'" )[[self.columns[0], self.columns[2]]]
+            print('stop_date is',agg_df[self.columns[0]].max())
         agg_df.set_index(self.columns[0], inplace=True)
         agg_df = TSFM.to_monthly(agg_df)
         return agg_df
@@ -120,34 +128,34 @@ class TSFM(object):
         return_df.sort_values(by=[self.columns[1], self.columns[0]], inplace=True, ignore_index=True)
         return return_df
 
-    def is_anomalous(self, section: str, actual_value: float, date: datetime.datetime):
-        model = self.model_dict[section]
-        future_date_index = self.df_dict[section][0].index[-1].month - date.month
-        print("current_date = {}, pred_date = {}".format(self.df_dict[section][0].index[-1], date))
-        print([self.df_dict[section][0].shape[0] + future_date_index - 1])
-        pred = model.fit_predict([self.df_dict[section][0].shape[0] + future_date_index - 1])[-1]
-        alpha = 0.05
-        conf_int = model.conf_int(alpha = alpha)
-        extreme_conf_int = model.conf_int(alpha = 0.0005)
+    # def is_anomalous(self, section: str, actual_value: float, date: datetime.datetime):
+    #     model = self.model_dict[section]
+    #     future_date_index = self.df_dict[section][0].index[-1].month - date.month
+    #     print("current_date = {}, pred_date = {}".format(self.df_dict[section][0].index[-1], date))
+    #     print([self.df_dict[section][0].shape[0] + future_date_index - 1])
+    #     pred = model.fit_predict([self.df_dict[section][0].shape[0] + future_date_index - 1])[-1]
+    #     alpha = 0.05
+    #     conf_int = model.conf_int(alpha = alpha)
+    #     extreme_conf_int = model.conf_int(alpha = 0.0005)
 
-        # zscore = (actual_value - forecast[0][-1]) / max(float(forecast[1][-1]), float_min)
-        # anomaly_probability = (2 * st.norm(0, 1).cdf(abs(zscore))) - 1
+    #     # zscore = (actual_value - forecast[0][-1]) / max(float(forecast[1][-1]), float_min)
+    #     # anomaly_probability = (2 * st.norm(0, 1).cdf(abs(zscore))) - 1
         
-        result = {'Prediction': float(pred) if not float(
-                        pred) == float('inf') else 0.0,
-                    'CILower': float(conf_int[0]) if not float(
-                        conf_int[0]) == float('-inf') else 0.0,
-                    'CIUpper': float(conf_int[1]) if not float(
-                        conf_int[1]) == float('inf') else 0.0,
-                    'ConfLevel': float(1.0 - alpha) * 100,
-                    'IsAnomaly': actual_value < conf_int[0] or actual_value > conf_int[1],
-                    'IsAnomalyExtreme': actual_value < extreme_conf_int[0] or actual_value > extreme_conf_int[1],}
-                    # 'AnomalyProbability': 1 if raw_actual is None else float(anomaly_probability),
-                    # 'DownAnomalyProbability': 1 if raw_actual is None else float(down_anomaly_probability),
-                    # 'UpAnomalyProbability': 1 if raw_actual is None else float(up_anomaly_probability),
-                    # 'ModelFreshness': model_freshness}
-        print(result)
-        return(result)
+    #     result = {'Prediction': float(pred) if not float(
+    #                     pred) == float('inf') else 0.0,
+    #                 'CILower': float(conf_int[0]) if not float(
+    #                     conf_int[0]) == float('-inf') else 0.0,
+    #                 'CIUpper': float(conf_int[1]) if not float(
+    #                     conf_int[1]) == float('inf') else 0.0,
+    #                 'ConfLevel': float(1.0 - alpha) * 100,
+    #                 'IsAnomaly': actual_value < conf_int[0] or actual_value > conf_int[1],
+    #                 'IsAnomalyExtreme': actual_value < extreme_conf_int[0] or actual_value > extreme_conf_int[1],}
+    #                 # 'AnomalyProbability': 1 if raw_actual is None else float(anomaly_probability),
+    #                 # 'DownAnomalyProbability': 1 if raw_actual is None else float(down_anomaly_probability),
+    #                 # 'UpAnomalyProbability': 1 if raw_actual is None else float(up_anomaly_probability),
+    #                 # 'ModelFreshness': model_freshness}
+    #     print(result)
+    #     return(result)
     
     def anomaly_filter(self, df: pd.core.frame.DataFrame, train_size = 24, alpha: float = 0.05):
         '''
@@ -218,6 +226,3 @@ class TSFM(object):
     @classmethod
     def to_monthly(cls, df: pd.core.frame.DataFrame) -> pd.core.frame.DataFrame:
         return df.resample('MS').sum()
-
-    
-    

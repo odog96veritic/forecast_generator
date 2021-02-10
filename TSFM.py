@@ -70,11 +70,11 @@ class TSFM(object):
                 print("Number of data points in Section", section, "is too small (" + str(
                     temp_train_df.shape[0]) + ". Must be at least twice the declared cycle length.")
     def get_actual_data(self, section: str):
-            agg_df = self.df[self.columns].groupby(self.columns[0:2], as_index=False).sum()
-            agg_df = agg_df.query(self.columns[1] + "==" + "'" + section + "'")[[self.columns[0], self.columns[2]]]
-            agg_df.set_index(self.columns[0], inplace=True)
-            agg_df = TSFM.to_monthly(agg_df)
-            return agg_df
+        agg_df = self.df[self.columns].groupby(self.columns[0:2], as_index=False).sum()
+        agg_df = agg_df.query(self.columns[1] + "==" + "'" + section + "'")[[self.columns[0], self.columns[2]]]
+        agg_df.set_index(self.columns[0], inplace=True)
+        agg_df = TSFM.to_monthly(agg_df)
+        return agg_df
 
     def get_train_data(self, section: str,):  ## added stop date
         actual_df = self.get_actual_data(section)

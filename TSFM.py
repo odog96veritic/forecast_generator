@@ -3,7 +3,7 @@
 import numpy as np
 import pandas as pd
 import pmdarima
-import datetime
+from datetime import datetime
 import typing
 from matplotlib import pyplot as plt
 import matplotlib.dates as mdates
@@ -24,6 +24,7 @@ class TSFM(object):
                  do_anomaly_filter : bool = True,
                  alpha: float = 0.05,):
         self.target_variable = target_variable
+        # self.n_pred_period = n_pred_period + abs((datetime.strptime(df[date_variable].to_numpy()[-1])  - datetime.strptime(stop_date, "%Y-%m-%d")).days)
         self.n_pred_period = n_pred_period
         self.stop_date = stop_date
         self.cycle_length = cycle_length
@@ -35,6 +36,7 @@ class TSFM(object):
         # Select relevant columns for train and test df, create empty pred df
         self.columns = [date_variable, target_variable, value_variable]
         df[self.columns[0]] = pd.to_datetime(df[self.columns[0]])
+        
 
         self.df = df
         self.pred = pd.DataFrame(columns=self.columns)
@@ -76,6 +78,10 @@ class TSFM(object):
         agg_df = TSFM.to_monthly(agg_df)
         return agg_df
 
+    def get_adjusted_actual_data(self, section: str):
+        train_df = self.get_train_data(section)
+        return self.anomaly_filter(self.get_actual_data(section), train_size=train_df.shape[0])
+
     def get_train_data(self, section: str,):  ## added stop date
         actual_df = self.get_actual_data(section)
         if self.stop_date is None:
@@ -108,11 +114,38 @@ class TSFM(object):
     
     def plot(self, section: str):
         actual = self.get_actual_data(section)
+        adjusted_actual = self.get_adjusted_actual_data(section)
         pred, ci = self.get_pred_data(section, return_conf_int=True)
+
+        actual_model = pmdarima.auto_arima(actual[actual.columns[-1]],
+                                                start_p=0, start_P=0,
+                                                start_q=0, start_Q=0,
+                                                d=1, D=1,
+                                                max_p=4, max_P=2,
+                                                max_d=2, max_D=2,
+                                                max_q=2, max_Q=2,
+                                                trace=True, m=self.cycle_length)
+        adjusted_actual_model = pmdarima.auto_arima(adjusted_actual[adjusted_actual.columns[-1]],
+                                                start_p=0, start_P=0,
+                                                start_q=0, start_Q=0,
+                                                d=1, D=1,
+                                                max_p=4, max_P=2,
+                                                max_d=2, max_D=2,
+                                                max_q=2, max_Q=2,
+                                                trace=True, m=self.cycle_length)
+
+        actual_pred = actual_model.predict(12)
+        adjusted_actual_pred = adjusted_actual_model.predict(12)
+        pred_date_range = pd.date_range(max(actual.index),freq='MS',periods=12+1)[1:]
+
         fig, ax = plt.subplots(figsize=(14,6))
         ax.plot(actual.index, actual[actual.columns[0]],label="Actual")   #Actuals This should come from original DS (all actuals)
+        ax.plot(adjusted_actual.index, adjusted_actual[adjusted_actual.columns[0]],'-g', label="Adjusted Actual")   
         ax.plot(pred.index, pred[pred.columns[0]], '-r',alpha=0.75,label="Forecast")  ## Pred
         ax.fill_between(pred.index, ci[:, 0], ci[:, 1],alpha=0.3, color='b')  ## Conf intervals
+        
+        ax.plot(pred_date_range, actual_pred, '.b',alpha=0.75,label="Actual Forecast")
+        ax.plot(pred_date_range, adjusted_actual_pred, '.g',alpha=0.75,label="Adjusted Actual Forecast")
         plt.title('Forecast Model')
         plt.xlabel('Year')
         plt.ylabel('Forecast Accurary')

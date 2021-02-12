@@ -186,66 +186,88 @@ class TSFM(object):
     #     print(result)
     #     return(result)
     
-    def anomaly_filter(self, df: pd.core.frame.DataFrame, train_size = 24, alpha: float = 0.05):
-        '''
-        input df is monthly
-        input df has date as index and 1 value column
-        '''
-        def find_anomaly_index(actual_list: list, conf_int_list: list, inf_bound: int = None):
-            print("finding Anomaly Index")
-            print(actual_list, conf_int_list)
-            for i in range(len(actual_list)):
-                actual = actual_list[i]
-                conf_int =  conf_int_list[i]
-                if inf_bound is not None:
-                    conf_int[inf_bound] = np.inf
-                if actual < conf_int[0] or actual > conf_int[1]:
-                    return i
-            return None
+    # def anomaly_filter(self, df: pd.core.frame.DataFrame, rolling_period: int = 12, train_size:int = 24, alpha: float = 0.05):
+    #     '''
+    #     input df is monthly
+    #     input df has date as index and 1 value column
+    #     '''
+    #     def find_anomaly_index(actual_list: list, conf_int_list: list, inf_bound: int = None):
+    #         print("finding Anomaly Index")
+    #         print(actual_list, conf_int_list)
+    #         for i in range(len(actual_list)):
+    #             actual = actual_list[i]
+    #             conf_int =  conf_int_list[i]
+    #             if inf_bound is not None:
+    #                 conf_int[inf_bound] = np.inf
+    #             if actual < conf_int[0] or actual > conf_int[1]:
+    #                 return i
+    #         return None
 
-        train = df.head(train_size)
-        inspecting_df = df.tail(df.shape[0] - train_size)
+    #     train = df.head(train_size)
+    #     inspecting_df = df.tail(df.shape[0] - train_size)
         
-        while train.shape[0] < df.shape[0]:
+    #     while train.shape[0] < df.shape[0]:
+    #         arima_model = pmdarima.auto_arima(train[train.columns[0]],
+    #                                         start_p=0, start_P=0,
+    #                                         start_q=0, start_Q=0,
+    #                                         d=1, D=1,
+    #                                         max_p=4, max_P=2,
+    #                                         max_d=2, max_D=2,
+    #                                         max_q=2, max_Q=2,
+    #                                         trace=True, m=self.cycle_length)
+    #         pred_list, conf_int_list = arima_model.predict(n_periods=df.shape[0] - train.shape[0], return_conf_int=True, alpha=alpha)
+    #         anomaly_index = find_anomaly_index(df.iloc[train.shape[0]:][df.columns[0]], conf_int_list)
+    #         if anomaly_index is not None:
+    #             print("Anomaly spotted at {}".format(train.shape[0] + anomaly_index))
+    #             if anomaly_index != 0:
+    #                 train = train.append(df.iloc[train.shape[0]:train.shape[0] + anomaly_index])
+    #             arima_model = pmdarima.auto_arima(train[train.columns[0]],
+    #                                                 start_p=0, start_P=0,
+    #                                                 start_q=0, start_Q=0,
+    #                                                 d=1, D=1,
+    #                                                 max_p=4, max_P=2,
+    #                                                 max_d=2, max_D=2,
+    #                                                 max_q=2, max_Q=2,
+    #                                                 trace=True, m=self.cycle_length)
+    #             pred_list, conf_int_list = arima_model.predict(n_periods=1, return_conf_int=True, alpha=alpha)
+    #             pred, conf_int = pred_list[0], conf_int_list[0]
+    #             actual = df.iloc[train.shape[0]][df.columns[0]]
+    #             print("Pred {}, actual {}, conf_int {}".format(pred, actual, conf_int))
+    #             if actual < conf_int[0] or actual > conf_int[1]:
+    #                 if actual > conf_int[1]:
+    #                     print("Appending actual data")
+    #                     train = train.append(df.iloc[train.shape[0]])
+    #                 else:
+    #                     print("Appending modeled data")
+    #                     temp_pred_df = pd.DataFrame(
+    #                         data={train.columns[0]: [pred]}, index=pd.date_range(max(train.index),freq='MS',periods=2)[1:])
+    #                     train = train.append(temp_pred_df)
+    #         else:
+    #             print("No Anomaly spotted, appending the rest of the data")
+    #             train = train.append(df.iloc[train.shape[0]:])
+    #     return train
+
+    def anomaly_filter(self, df: pd.core.frame.DataFrame, n_rolling_period: int = 12, train_size:int = 24, alpha: float = 0.05):
+        train = df.head(train_size)
+        for i in range(train_size, df.shape[0], 12):
             arima_model = pmdarima.auto_arima(train[train.columns[0]],
-                                            start_p=0, start_P=0,
-                                            start_q=0, start_Q=0,
-                                            d=1, D=1,
-                                            max_p=4, max_P=2,
-                                            max_d=2, max_D=2,
-                                            max_q=2, max_Q=2,
-                                            trace=True, m=self.cycle_length)
-            pred_list, conf_int_list = arima_model.predict(n_periods=df.shape[0] - train.shape[0], return_conf_int=True, alpha=alpha)
-            anomaly_index = find_anomaly_index(df.iloc[train.shape[0]:][df.columns[0]], conf_int_list)
-            if anomaly_index is not None:
-                print("Anomaly spotted at {}".format(train.shape[0] + anomaly_index))
-                if anomaly_index != 0:
-                    train = train.append(df.iloc[train.shape[0]:train.shape[0] + anomaly_index])
-                arima_model = pmdarima.auto_arima(train[train.columns[0]],
-                                                    start_p=0, start_P=0,
-                                                    start_q=0, start_Q=0,
-                                                    d=1, D=1,
-                                                    max_p=4, max_P=2,
-                                                    max_d=2, max_D=2,
-                                                    max_q=2, max_Q=2,
-                                                    trace=True, m=self.cycle_length)
-                pred_list, conf_int_list = arima_model.predict(n_periods=1, return_conf_int=True, alpha=alpha)
-                pred, conf_int = pred_list[0], conf_int_list[0]
-                actual = df.iloc[train.shape[0]][df.columns[0]]
-                print("Pred {}, actual {}, conf_int {}".format(pred, actual, conf_int))
-                if actual < conf_int[0] or actual > conf_int[1]:
-                    if actual > conf_int[1]:
-                        print("Appending actual data")
-                        train = train.append(df.iloc[train.shape[0]])
-                    else:
-                        print("Appending modeled data")
-                        temp_pred_df = pd.DataFrame(
-                            data={train.columns[0]: [pred]}, index=pd.date_range(max(train.index),freq='MS',periods=2)[1:])
-                        train = train.append(temp_pred_df)
-            else:
-                print("No Anomaly spotted, appending the rest of the data")
-                train = train.append(df.iloc[train.shape[0]:])
+                                                start_p=0, start_P=0,
+                                                start_q=0, start_Q=0,
+                                                d=1, D=1,
+                                                max_p=4, max_P=2,
+                                                max_d=2, max_D=2,
+                                                max_q=2, max_Q=2,
+                                                trace=True, m=self.cycle_length)
+            temp_actual_df = df.iloc[i:min(i+12, df.shape[0]), :]
+            temp_pred, ic_list = arima_model.predict(n_rolling_period, return_conf_int=True, alpha=alpha)
+            for j in range(temp_actual_df.shape[0]):
+                temp_actual = temp_actual_df.iloc[j, 0]
+                ic = ic_list[j]
+                if temp_actual < ic[0] or temp_actual > ic[1]:
+                    temp_actual_df.iloc[j, 0] = temp_pred[j]
+            train = train.append(temp_actual_df)
         return train
+
 
     @classmethod
     def to_monthly(cls, df: pd.core.frame.DataFrame) -> pd.core.frame.DataFrame:

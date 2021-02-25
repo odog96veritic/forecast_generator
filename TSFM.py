@@ -29,7 +29,7 @@ class TSFM(object):
                  alpha: float = 0.05,
                  stepwise: bool = True,
                  start_order: tuple = (0, None, 0),
-                 max_order: tuple = (4, 2, 12),
+                 max_order: tuple = (4, 2, 5),
                  start_seasonal_order: tuple = (0, 0, 0),
                  max_seasonal_order: tuple = (2, 2, 4)):
         self.target_variable = target_variable
@@ -121,7 +121,7 @@ class TSFM(object):
         return actual_df.iloc[lambda x: x.index > self.stop_date].copy()
 
     def get_pred_data(self, section: str, return_conf_int: bool = False, is_adjusted: bool = True):
-        actual_df = self.get_actual_data(section)
+        actual_df = self.get_actual_data(section, is_adjusted)
         model = self.get_model(section=section, is_adjusted=is_adjusted)
         print(model.predict(self.n_pred_period, return_conf_int=return_conf_int))
         pred, conf_int = model.predict(self.n_pred_period, return_conf_int=True)
@@ -136,6 +136,19 @@ class TSFM(object):
         if return_conf_int:
             return temp_pred_df.copy(), conf_int
         return temp_pred_df.copy()
+
+    def get_pred_df(self):
+        return_df = pd.DataFrame(columns=self.columns)
+        for section in self.section_list:
+            actual_pred = self.get_pred_data(section, is_adjusted=False)
+            adjusted_actual_pred = self.get_pred_data(section, is_adjusted=True)
+            pred = pd.DataFrame(data={actual_pred.columns[0]: actual_pred[actual_pred.columns[0]].to_numpy(), "value2": adjusted_actual_pred[adjusted_actual_pred.columns[0]].to_numpy()},
+                                index = actual_pred.index)
+            pred.reset_index(inplace=True)
+            pred[self.target_variable] = [section for x in range(pred.shape[0])]
+            return_df = return_df.append(pred, ignore_index=True)
+        return_df.sort_values(by=[self.columns[1], self.columns[0]], inplace=True, ignore_index=True)
+        return return_df
 
     # Model Getters----------------------------------------------------------
     def get_model(self, section: str, is_adjusted: bool = True):
@@ -174,7 +187,7 @@ class TSFM(object):
     def anomaly_filter(self,
                        df: pd.core.frame.DataFrame,
                        return_conf_int: bool = False, 
-                       n_rolling_period: int = 6,
+                       n_rolling_period: int = 12,
                        alpha: float = 0.05):
         df = df.copy()
         train = df.iloc[lambda x: x.index <= self.stop_date]

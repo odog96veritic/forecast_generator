@@ -28,9 +28,9 @@ class TSFM(object):
                  cycle_length: int = 12,
                  alpha: float = 0.05,
                  stepwise: bool = True,
-                 start_order: tuple = (0, None, 0),
+                 start_order: tuple = (0, 1, 0),
                  max_order: tuple = (4, 2, 5),
-                 start_seasonal_order: tuple = (0, 0, 0),
+                 start_seasonal_order: tuple = (0, 1, 0),
                  max_seasonal_order: tuple = (2, 2, 4)):
         self.target_variable = target_variable
         # self.n_pred_period = n_pred_period + abs((datetime.strptime(df[date_variable].to_numpy()[-1])  - datetime.strptime(stop_date, "%Y-%m-%d")).days)
@@ -121,7 +121,7 @@ class TSFM(object):
         return actual_df.iloc[lambda x: x.index > self.stop_date].copy()
 
     def get_pred_data(self, section: str, return_conf_int: bool = False, is_adjusted: bool = True):
-        actual_df = self.get_actual_data(section, is_adjusted)
+        actual_df = self.get_actual_data(section, False)
         model = self.get_model(section=section, is_adjusted=is_adjusted)
         print(model.predict(self.n_pred_period, return_conf_int=return_conf_int))
         pred, conf_int = model.predict(self.n_pred_period, return_conf_int=True)

@@ -367,3 +367,6 @@ class TSFM(object):
     @classmethod
     def to_monthly(cls, df: pd.core.frame.DataFrame) -> pd.core.frame.DataFrame:
         return df.resample('MS').sum()
+
+    def foo():
+        return

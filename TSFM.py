@@ -44,10 +44,11 @@ class TSFM(object):
         self.start_seasonal_order = start_seasonal_order
         self.max_seasonal_order = max_seasonal_order
 
-        (start_p, start_d, start_q) = start_order
-        (max_p, max_d, max_q) = max_order
-        (start_P, start_D, start_Q) = start_seasonal_order
-        (max_P, max_D, max_Q) = max_seasonal_order
+        self.is_log_transformed_dict = dict()
+        self.pred_dict = dict()
+        self.pred_ic_dict = dict()
+        self.adjusted_pred_dict = dict()
+        self.adjusted_pred_ic_dict = dict()
 
         # train and test df must have date as index, and 2 columns: sections(e.g. territory) and values(e.g. order_volume)
         if type(date_variable) is int:
@@ -71,58 +72,85 @@ class TSFM(object):
         if self.section_list is None:
             self.section_list = df[target_variable].unique()
         for section in self.section_list:
-            print("Inspecting", section, "...")
-            temp_actual_df = self.get_actual_data(section=section, is_adjusted=False)
-            if temp_actual_df.shape[0] >= 2 * cycle_length:
-                # train actual data
-                print("Training", temp_actual_df.shape[0], "actual records ...")
-                arima_model = pmdarima.auto_arima(temp_actual_df[temp_actual_df.columns[-1]],
-                                                start_p=start_p, start_P=start_P,
-                                                start_q=start_q, start_Q=start_Q,
-                                                d=start_d, D=start_D,
-                                                max_p=max_p, max_P=max_P,
-                                                max_d=max_d, max_D=max_D,
-                                                max_q=max_q, max_Q=max_Q,
-                                                trace=True, m=cycle_length, stepwise=stepwise)
-                self.model_dict[section] = arima_model
+            self.is_log_transformed_dict[section] = False
+            models = self.__train_models(section = section, is_log_transformed=False)
+            if self.__have_negative_prediction(models=models):
+                print("Negative prediction detected in", section)
+                self.is_log_transformed_dict[section] = True
+                models = self.__train_models(section = section, is_log_transformed=True)
+            (arima_model, adjusted_arima_model) = models
+            self.model_dict[section] = arima_model
+            self.adjusted_model_dict[section] = adjusted_arima_model
+            self.pred_dict[section], self.pred_ic_dict[section] = self.__get_pred_data(section=section, return_conf_int=True, is_adjusted=False)
+            self.adjusted_pred_dict[section], self.adjusted_pred_ic_dict[section] = self.__get_pred_data(section=section, return_conf_int=True, is_adjusted=True)
 
-                temp_adjusted_actual_df = self.get_actual_data(section=section, is_adjusted=True)
-                # train adjusted actual data
-                print("Training", temp_adjusted_actual_df.shape[0], "adjusted actual records ...")
-                arima_model = pmdarima.auto_arima(temp_adjusted_actual_df[temp_adjusted_actual_df.columns[-1]],
-                                                start_p=start_p, start_P=start_P,
-                                                start_q=start_q, start_Q=start_Q,
-                                                d=start_d, D=start_D,
-                                                max_p=max_p, max_P=max_P,
-                                                max_d=max_d, max_D=max_D,
-                                                max_q=max_q, max_Q=max_Q,
-                                                trace=True, m=cycle_length, stepwise=stepwise)
-                self.adjusted_model_dict[section] = arima_model
-            else:
-                print("Number of data points in Section", section, "is too small (" + str(
-                    temp_actual_df.shape[0]) + ". Must be at least twice the declared cycle length.")
+            # print("Inspecting", section, "...")
+            # temp_actual_df = self.get_actual_data(section=section, is_adjusted=False)
+            # if temp_actual_df.shape[0] >= 2 * cycle_length:
+            #     # train actual data
+            #     print("Training", temp_actual_df.shape[0], "actual records ...")
+            #     arima_model = pmdarima.auto_arima(temp_actual_df[temp_actual_df.columns[-1]],
+            #                                     start_p=start_p, start_P=start_P,
+            #                                     start_q=start_q, start_Q=start_Q,
+            #                                     d=start_d, D=start_D,
+            #                                     max_p=max_p, max_P=max_P,
+            #                                     max_d=max_d, max_D=max_D,
+            #                                     max_q=max_q, max_Q=max_Q,
+            #                                     trace=True, m=cycle_length, stepwise=stepwise)
+            #     self.model_dict[section] = arima_model
+
+            #     temp_adjusted_actual_df = self.get_actual_data(section=section, is_adjusted=True)
+            #     # train adjusted actual data
+            #     print("Training", temp_adjusted_actual_df.shape[0], "adjusted actual records ...")
+            #     arima_model = pmdarima.auto_arima(temp_adjusted_actual_df[temp_adjusted_actual_df.columns[-1]],
+            #                                     start_p=start_p, start_P=start_P,
+            #                                     start_q=start_q, start_Q=start_Q,
+            #                                     d=start_d, D=start_D,
+            #                                     max_p=max_p, max_P=max_P,
+            #                                     max_d=max_d, max_D=max_D,
+            #                                     max_q=max_q, max_Q=max_Q,
+            #                                     trace=True, m=cycle_length, stepwise=stepwise)
+            #     self.adjusted_model_dict[section] = arima_model
+            # else:
+            #     print("Number of data points in Section", section, "is too small (" + str(
+            #         temp_actual_df.shape[0]) + ". Must be at least twice the declared cycle length.")
 
     # DF Getters--------------------------------------------------------------
-    def get_actual_data(self, section: str, is_adjusted: bool = True,):
+    def get_actual_data(self, section: str, is_adjusted: bool, is_log_transformed: bool = False) -> pd.core.frame.DataFrame:
         agg_df = self.df[self.columns].groupby(self.columns[0:2], as_index=False).sum().copy()
         agg_df = agg_df.query(self.columns[1] + "==" + "'" + section + "'")[[self.columns[0], self.columns[2]]]
         agg_df.set_index(self.columns[0], inplace=True)
         agg_df = TSFM.to_monthly(agg_df)
         if is_adjusted:
-            return self.anomaly_filter(agg_df, alpha = self.alpha)
-        return agg_df.copy()
+            agg_df = self.anomaly_filter(agg_df, alpha = self.alpha)
+        if is_log_transformed:
+            agg_df = TSFM.log_transform(agg_df)
+        return agg_df
 
-    def get_train_data(self, section: str,):  ## added stop date
-        actual_df = self.get_actual_data(section)
+    def get_train_data(self, section: str):  ## added stop date
+        actual_df = self.get_actual_data(section, is_adjusted=False)
         return actual_df.iloc[lambda x: x.index <= self.stop_date].copy()
 
-    def get_test_data(self, section: str,):
+    def get_test_data(self, section: str, ):
         actual_df = self.get_actual_data(section)
         return actual_df.iloc[lambda x: x.index > self.stop_date].copy()
 
     def get_pred_data(self, section: str, return_conf_int: bool = False, is_adjusted: bool = True):
+        pred, ic = None, None
+        if is_adjusted:
+            pred, ic = self.adjusted_pred_dict[section], self.adjusted_pred_ic_dict[section]
+        else:
+            pred, ic = self.pred_dict[section], self.pred_ic_dict[section]
+        if return_conf_int:
+            return pred, ic
+        return pred
+
+    def __get_pred_data(self, section: str, return_conf_int: bool = False, is_adjusted: bool = True):
         actual_df = self.get_actual_data(section, False)
         model = self.get_model(section=section, is_adjusted=is_adjusted)
+        if model is None:
+            print("Model of", section, "section was not initiated. Might due to insufficient training data.")
+            return None
         print(model.predict(self.n_pred_period, return_conf_int=return_conf_int))
         pred, conf_int = model.predict(self.n_pred_period, return_conf_int=True)
 
@@ -133,11 +161,16 @@ class TSFM(object):
                 self.columns[-1]: pred})  # Use numbers inplace of future dates for now)
         temp_pred_df = temp_pred_df[[self.columns[0], self.columns[2]]]
         temp_pred_df.set_index(self.columns[0], inplace=True)
+        if self.is_log_transformed_dict[section]:
+            temp_pred_df = self.exp_transform(temp_pred_df)
         if return_conf_int:
             return temp_pred_df.copy(), conf_int
         return temp_pred_df.copy()
 
     def get_pred_df(self):
+        '''
+        function to be called in the backend to get pred data from all sections
+        '''
         return_df = pd.DataFrame(columns=self.columns)
         for section in self.section_list:
             actual_pred = self.get_pred_data(section, is_adjusted=False)
@@ -189,6 +222,7 @@ class TSFM(object):
                        return_conf_int: bool = False, 
                        n_rolling_period: int = 12,
                        alpha: float = 0.05):
+        print("Applying anomaly filter...")
         df = df.copy()
         train = df.iloc[lambda x: x.index <= self.stop_date]
         stop_date = max(train.index)
@@ -206,7 +240,7 @@ class TSFM(object):
                                                 max_d=max_d, max_D=max_D,
                                                 max_q=max_q, max_Q=max_Q,
                                                 trace=True, m=self.cycle_length, stepwise=self.stepwise)
-            temp_actual_df = df.iloc[i:min(i+n_rolling_period, df.shape[0]), :]
+            temp_actual_df = df.iloc[i:min(i+n_rolling_period, df.shape[0]), :].copy()
             temp_pred, ic_list = arima_model.predict(n_rolling_period, return_conf_int=True, alpha=alpha)
             for j in range(temp_actual_df.shape[0]):
                 temp_actual = temp_actual_df.iloc[j, 0]
@@ -264,43 +298,71 @@ class TSFM(object):
         print("MAPE = {}".format(MAPE))
         print("Average MAE = {}".format(np.mean(MAE)))
         print("Average MAPE = {}".format(np.mean(MAPE)))
+
+    def __train_models(self, section: str, is_log_transformed: bool) -> tuple:
+        (start_p, start_d, start_q) = self.start_order
+        (max_p, max_d, max_q) = self.max_order
+        (start_P, start_D, start_Q) = self.start_seasonal_order
+        (max_P, max_D, max_Q) = self.max_seasonal_order
     
-    def test_anomaly_filter(self, section):
-        actual = self.get_actual_data(section, is_adjusted=False)
-        max_val = max(actual.iloc[:, 0])*1.5
-        min_val = min(actual.iloc[:, 0])*0.5
-        print(actual)
+        print("Inspecting", section, "...")
+        temp_actual_df = self.get_actual_data(section=section, is_adjusted=False, is_log_transformed=is_log_transformed)
+        if temp_actual_df.shape[0] >= 2 * self.cycle_length:
+            # train actual data
+            print("Training", temp_actual_df.shape[0], "actual records ...")
+            arima_model = pmdarima.auto_arima(temp_actual_df[temp_actual_df.columns[-1]],
+                                            start_p=start_p, start_P=start_P,
+                                            start_q=start_q, start_Q=start_Q,
+                                            d=start_d, D=start_D,
+                                            max_p=max_p, max_P=max_P,
+                                            max_d=max_d, max_D=max_D,
+                                            max_q=max_q, max_Q=max_Q,
+                                            trace=True, m=self.cycle_length, stepwise=self.stepwise)
 
-        train = self.get_train_data(section=section)
-        test = self.get_test_data(section)
-        test = test.apply(lambda x: random.randint(int(min_val), int(max_val)), axis=1, result_type='broadcast')
-        actual = train.append(test).copy().astype('int')
-        print(actual)
+            temp_adjusted_actual_df = self.get_actual_data(section=section, is_adjusted=True, is_log_transformed=is_log_transformed)
+            # train adjusted actual data
+            print("Training", temp_adjusted_actual_df.shape[0], "adjusted actual records ...")
+            adjusted_arima_model = pmdarima.auto_arima(temp_adjusted_actual_df[temp_adjusted_actual_df.columns[-1]],
+                                            start_p=start_p, start_P=start_P,
+                                            start_q=start_q, start_Q=start_Q,
+                                            d=start_d, D=start_D,
+                                            max_p=max_p, max_P=max_P,
+                                            max_d=max_d, max_D=max_D,
+                                            max_q=max_q, max_Q=max_Q,
+                                            trace=True, m=self.cycle_length, stepwise=self.stepwise)
+            return arima_model, adjusted_arima_model
+        print("Number of data points in Section", section, "is too small (" + str(
+            temp_actual_df.shape[0]) + ". Must be at least twice the declared cycle length.")
+        return None, None
 
-        adjusted_actual, conf_int_df = self.anomaly_filter(actual, return_conf_int=True)
-        # pred, ci = self.get_pred_data(section, return_conf_int=True)
+    def __have_negative_prediction(self, models: tuple) -> bool:
+        (model, adjusted_model) = models
+        if model is None or adjusted_model is None:
+            return False
+        pred = model.predict(self.n_pred_period)
+        adjusted_pred = adjusted_model.predict(self.n_pred_period)
+        if min(min(pred), min(adjusted_pred)) < 0:
+            return True
+        return False
 
-        actual_pred = self.get_pred_data(section, is_adjusted=False)
-        adjusted_actual_pred = self.get_pred_data(section, is_adjusted=True)
-
-        fig, ax = plt.subplots(1, figsize=(14,6))
-        ax.plot(actual.index, actual[actual.columns[0]].to_numpy(),label="Actual")   #Actuals This should come from original DS (all actuals)
-        ax.plot(adjusted_actual.index, adjusted_actual[adjusted_actual.columns[0]].to_numpy(),'-g', label="Adjusted Actual")   
-        # ax.plot(pred.index, pred[pred.columns[0]], '-r',alpha=0.75,label="Forecast")  ## Pred
-        ax.fill_between(conf_int_df.index, conf_int_df.iloc[:, 0], conf_int_df.iloc[:, 1],alpha=0.3, color='b')  ## Conf intervals
-        
-        ax.plot(actual_pred.index, actual_pred.iloc[:, 0], '--b',alpha=0.75,label="Actual Forecast")
-        ax.plot(adjusted_actual_pred.index, adjusted_actual_pred.iloc[:, 0], '--g',alpha=0.75,label="Adjusted Actual Forecast")
-        plt.title('Forecast Model')
-        plt.xlabel('Year')
-        plt.ylabel('Forecast Accurary')
-
-        ax.xaxis.set_major_locator(mdates.YearLocator())
-        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
-        ax.xaxis.set_minor_locator(mdates.MonthLocator())
-
-        plt.legend()
-        plt.show()
+    @staticmethod
+    def log_transform(df: pd.core.frame.DataFrame) -> pd.core.frame.DataFrame:
+        '''
+        df has 1 value column and has dates as indeces
+        '''
+        value_arr = df.loc[:, df.columns[0]].values.copy()
+        value_arr[value_arr < 1] = 1 # avoid negative results from transformation
+        value_arr = np.log(value_arr)
+        return  pd.DataFrame(index=df.index, data={df.columns[0]: value_arr})
+    
+    @staticmethod
+    def exp_transform(df: pd.core.frame.DataFrame) -> pd.core.frame.DataFrame:
+        '''
+        df has 1 value column and has dates as indeces
+        '''
+        value_arr = df.loc[:, df.columns[0]].values.copy()
+        value_arr = np.exp(value_arr)
+        return  pd.DataFrame(index=df.index, data={df.columns[0]: value_arr})
 
     @classmethod
     def to_monthly(cls, df: pd.core.frame.DataFrame) -> pd.core.frame.DataFrame:

@@ -73,61 +73,42 @@ class TSFM(object):
             self.section_list = df[target_variable].unique()
         for section in self.section_list:
             self.is_log_transformed_dict[section] = False
-            models = self.__train_models(section = section, is_log_transformed=False)
+            models = self.__train_models(section = section)
             if self.__have_negative_prediction(models=models):
                 print("Negative prediction detected in", section)
                 self.is_log_transformed_dict[section] = True
-                models = self.__train_models(section = section, is_log_transformed=True)
+                models = self.__train_models(section = section)
             (arima_model, adjusted_arima_model) = models
             self.model_dict[section] = arima_model
             self.adjusted_model_dict[section] = adjusted_arima_model
             self.pred_dict[section], self.pred_ic_dict[section] = self.__get_pred_data(section=section, return_conf_int=True, is_adjusted=False)
             self.adjusted_pred_dict[section], self.adjusted_pred_ic_dict[section] = self.__get_pred_data(section=section, return_conf_int=True, is_adjusted=True)
 
-            # print("Inspecting", section, "...")
-            # temp_actual_df = self.get_actual_data(section=section, is_adjusted=False)
-            # if temp_actual_df.shape[0] >= 2 * cycle_length:
-            #     # train actual data
-            #     print("Training", temp_actual_df.shape[0], "actual records ...")
-            #     arima_model = pmdarima.auto_arima(temp_actual_df[temp_actual_df.columns[-1]],
-            #                                     start_p=start_p, start_P=start_P,
-            #                                     start_q=start_q, start_Q=start_Q,
-            #                                     d=start_d, D=start_D,
-            #                                     max_p=max_p, max_P=max_P,
-            #                                     max_d=max_d, max_D=max_D,
-            #                                     max_q=max_q, max_Q=max_Q,
-            #                                     trace=True, m=cycle_length, stepwise=stepwise)
-            #     self.model_dict[section] = arima_model
-
-            #     temp_adjusted_actual_df = self.get_actual_data(section=section, is_adjusted=True)
-            #     # train adjusted actual data
-            #     print("Training", temp_adjusted_actual_df.shape[0], "adjusted actual records ...")
-            #     arima_model = pmdarima.auto_arima(temp_adjusted_actual_df[temp_adjusted_actual_df.columns[-1]],
-            #                                     start_p=start_p, start_P=start_P,
-            #                                     start_q=start_q, start_Q=start_Q,
-            #                                     d=start_d, D=start_D,
-            #                                     max_p=max_p, max_P=max_P,
-            #                                     max_d=max_d, max_D=max_D,
-            #                                     max_q=max_q, max_Q=max_Q,
-            #                                     trace=True, m=cycle_length, stepwise=stepwise)
-            #     self.adjusted_model_dict[section] = arima_model
-            # else:
-            #     print("Number of data points in Section", section, "is too small (" + str(
-            #         temp_actual_df.shape[0]) + ". Must be at least twice the declared cycle length.")
-
     # DF Getters--------------------------------------------------------------
-    def get_actual_data(self, section: str, is_adjusted: bool, is_log_transformed: bool = False) -> pd.core.frame.DataFrame:
+    def get_actual_data(self, section: str, is_adjusted: bool, is_log_transformed: bool = None) -> pd.core.frame.DataFrame:
+        '''
+        Returns the input data of a section with or without transformations.
+        * section: str: an element in the unique list of target variables.
+        * is_adjusted: bool: determine if the returning data is adjusted by the anomally filter.
+        * is_log_transformed: bool = None: determine if the returning data is log transformed. If is None then it's value is determined by self.is_log_transformed_dict[section]
+        '''
         agg_df = self.df[self.columns].groupby(self.columns[0:2], as_index=False).sum().copy()
         agg_df = agg_df.query(self.columns[1] + "==" + "'" + section + "'")[[self.columns[0], self.columns[2]]]
         agg_df.set_index(self.columns[0], inplace=True)
         agg_df = TSFM.to_monthly(agg_df)
         if is_adjusted:
             agg_df = self.anomaly_filter(agg_df, alpha = self.alpha)
+        if is_log_transformed is None:
+            is_log_transformed = self.is_log_transformed_dict[section]
         if is_log_transformed:
             agg_df = TSFM.log_transform(agg_df)
         return agg_df
 
-    def get_train_data(self, section: str):  ## added stop date
+    def get_train_data(self, section: str):
+        '''
+        Returns the training data for the anomaly filter method.
+        * section: str: an element in the unique list of target variables.
+        '''
         actual_df = self.get_actual_data(section, is_adjusted=False)
         return actual_df.iloc[lambda x: x.index <= self.stop_date].copy()
 

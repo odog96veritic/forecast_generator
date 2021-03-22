@@ -21,8 +21,8 @@ class TSFM(object):
                  df: pd.core.frame.DataFrame,
                  n_pred_period: int,
                  date_variable: typing.Union[int, str],
+                 target_variable: typing.Union[int, str],
                  value_variable: typing.Union[int, str],
-                 target_variable: str,
                  stop_date: str,         # stop date of train set, to split df to train and test sets
                  section_list: list = None,
                  cycle_length: int = 12,
@@ -55,6 +55,8 @@ class TSFM(object):
             date_variable = df.columns[date_variable]
         if type(value_variable) is int:
             value_variable = df.columns[value_variable]
+        if type(target_variable) is int:
+            target_variable = df.columns[target_variable]
         # Select relevant columns for train and test df, create empty pred df
         self.columns = [date_variable, target_variable, value_variable]
         df[self.columns[0]] = pd.to_datetime(df[self.columns[0]])
@@ -116,7 +118,7 @@ class TSFM(object):
         actual_df = self.get_actual_data(section)
         return actual_df.iloc[lambda x: x.index > self.stop_date].copy()
 
-    def get_pred_data(self, section: str, return_conf_int: bool = False, is_adjusted: bool = True):
+    def get_pred_data(self, section: str, is_adjusted: bool, return_conf_int: bool = False):
         pred, ic = None, None
         if is_adjusted:
             pred, ic = self.adjusted_pred_dict[section], self.adjusted_pred_ic_dict[section]
@@ -165,7 +167,7 @@ class TSFM(object):
         return return_df
 
     # Model Getters----------------------------------------------------------
-    def get_model(self, section: str, is_adjusted: bool = True):
+    def get_model(self, section: str, is_adjusted: bool):
         if is_adjusted:
             return self.adjusted_model_dict[section]
         return self.model_dict[section]

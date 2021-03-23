@@ -27,7 +27,7 @@ class TSFM (
 * **stop_date**: *str*: Last date of the "gold-standard", historical time segment. All data before or on this date are not adjusted by the anomaly filter.
 * **section_list**: *list*: List of items (sections) to be extracted from the input dataframe and processed. Default of **None** means all sections are processed.
 * **cycle_length**: *int*: Length, in month, of one cycle. Default of **12**.
-* **alpha**: *float*: Alpha value to determine the confidence interval. Default of **0.05**.
+* **alpha**: *float*: Alpha value to determine the confidence interval in anomaly filter. Default of **0.05**.
 * **stepwise**: *bool*: If the stepwise algorithm is used in auto_arima procedure. Default of **True**.
 * **start_order**: *tuple*: The starting (p, d, q) values used in auto_arima procedure. Default of **(0, 1, 0)**.
 * **max_order**: *tuple*: The max (p, d, q) values used in auto_arima procedure. Default of **(4, 2, 5)**.
@@ -59,3 +59,20 @@ class TSFM (
 * **get_model(self, section: str, is_adjusted: bool)**: Returns a trained model of a section. Parameters:
     * **section**: *str*: an element in the unique list of target variables.
     * **is_adjusted**: *bool*: determine if the model is trained from the adjusted or unadjusted data.
+* **plot(self, section: str)**: Plot function used for development. Plotting both actual and adjusted historical data and predictions. Parameters:
+    * **section**: *str*: an element in the unique list of target variables.
+* **anomaly_filter(self, df: pd.core.frame.DataFrame, return_conf_int: bool = False, n_rolling_period: int = 12, alpha: float = 0.05)**: Identifies anomallies and replace them with predictions from models trained from adjusted data ranging from the beginning to **self.stop_date**. This procedure is based on the time-series cross-validation process (train and eval are selected, returning the QC metrics, add eval to train then select new eval). Instead of returning QC metrics:
+    * arima model is trained
+    * data in eval is adjusted
+    * new eval is added to train
+    * new eval is selected
+    * repeat until all historical data are consumed.
+    
+    Parameters:
+    * **df**: *pd.core.frame.DataFrame*: Input dataframe of one item (section). Df should be monthly, have date indeces, 1 value column.
+    * **return_conf_int**: *bool*: determines if the confidence interval dataframe is returned with the adjusted data. Default of False means IC df is not returned.
+    * **n_rolling_period**: *int*: Size of eval segment. Default of 12.
+    * **alpha**: *float*: Alpha value to determine the confidence interval. Default of **0.05**.
+* **cross_validate(self,section: str, is_adjusted: bool)**: Performs time-series cross validation and print QC metrics. Parameters:
+    * **section**: *str*: an element in the unique list of target variables.
+    * **is_adjusted**: *bool*: determine if the validation is from the adjusted or unadjusted data.

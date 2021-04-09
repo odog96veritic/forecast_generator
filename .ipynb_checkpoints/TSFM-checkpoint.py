@@ -33,12 +33,8 @@ class AutoArimaWrapper(ModelWrapper):
             pass
         self.__model = pmdarima.auto_arima(y=y, **kwargs)
 
-    def predict(self, *args, **kwargs):
-        return self.__model.predict(*args, **kwargs)
-
-    def get_conf_int(self, *args, **kwargs):
-        _, conf_int = self.__model.predict(*args, return_conf_int=True, **kwargs)
-        return conf_int
+    def predict(self, **kwargs):
+        return self.__model.predict(**kwargs)
 
 class KerasWrapper(ModelWrapper):
     def __init__(self, **kwargs):
@@ -76,9 +72,9 @@ class TSFM(object):
                  input_is_monthly: bool, 
                  output_is_monthly: bool,
                  section_list: list = None,
+                 cycle_length: int = 12,
                  alpha: float = 0.05,):
                 #  stepwise: bool = True,
-                # cycle_length: int = 12,
                 #  start_order: tuple = (0, 1, 0),
                 #  max_order: tuple = (4, 2, 5),
                 #  start_seasonal_order: tuple = (0, 1, 0),
@@ -90,12 +86,13 @@ class TSFM(object):
         self.model_wrapper = model_wrapper
         self.input_is_monthly = input_is_monthly
         self.output_is_monthly = output_is_monthly
+        self.cycle_length = cycle_length
         self.alpha = alpha
-        # self.stepwise = stepwise
-        # self.start_order = start_order
-        # self.max_order = max_order
-        # self.start_seasonal_order = start_seasonal_order
-        # self.max_seasonal_order = max_seasonal_order
+        self.stepwise = stepwise
+        self.start_order = start_order
+        self.max_order = max_order
+        self.start_seasonal_order = start_seasonal_order
+        self.max_seasonal_order = max_seasonal_order
 
         self.is_log_transformed_dict = dict()
         self.pred_dict = dict()
@@ -119,7 +116,11 @@ class TSFM(object):
         if input_is_monthly and not output_is_monthly:
             print("Monthly to daily is not yet supported")
             return
-        self.df = df.copy()
+        if not input_is_monthly and output_is_monthly:
+            full_daily_df, remainder_daily_df = self.get_full_month_data(df=df.copy())
+            self.df = TSFM.to_monthly(full_daily_df)
+        else:
+            self.df = df.copy()
 
         # keys: sections(territories), value: list(train, test, pred), for easy storing and fetching data
         self.df_dict = dict()
@@ -151,12 +152,10 @@ class TSFM(object):
         * is_adjusted: bool: determine if the returning data is adjusted by the anomally filter.
         * is_log_transformed: bool = None: determine if the returning data is log transformed. If is None then it's value is determined by self.is_log_transformed_dict[section]
         '''
-        agg_df = self.df[self.columns].groupby(self.columns[0:2], as_index=False).sum().copy()
+        agg_df = self.monthly_df[self.columns].groupby(self.columns[0:2], as_index=False).sum().copy()
         agg_df = agg_df.query(self.columns[1] + "==" + "'" + section + "'")[[self.columns[0], self.columns[2]]]
         agg_df.set_index(self.columns[0], inplace=True)
-        if not self.input_is_monthly and self.output_is_monthly:
-            full_daily_df, remainder_daily_df = self.get_full_month_data(df=agg_df.copy())
-            agg_df = TSFM.to_monthly(full_daily_df)
+        agg_df = TSFM.to_monthly(agg_df)
         if is_adjusted and self.output_is_monthly:
             agg_df = self.anomaly_filter(agg_df, alpha = self.alpha)
         if is_log_transformed is None:
@@ -188,9 +187,9 @@ class TSFM(object):
         return pred
 
     def get_full_month_data(self, df):
-        max_date = df.index.max()
+        max_date = df[self.columns[0]].max()
         if self.__is_last_day_of_month(max_date):
-            return df, None
+            return df
         new_date =  max_date.year + '-' + max_date.month + '-' + max_date.day
         return df.query(self.columns[0] + "<'" + new_date + "'"), df.query(self.columns[0] + ">='" + new_date + "'")
         
@@ -212,8 +211,9 @@ class TSFM(object):
         if model is None:
             print("Model of", section, "section was not initiated. Might due to insufficient training data.")
             return None
-        pred,  = model.predict(self.n_pred_period)
-        conf_int = model.get_conf_int(self.n_pred_period)
+        print(model.predict(self.n_pred_period, return_conf_int=return_conf_int))
+        pred, conf_int = model.predict(self.n_pred_period, return_conf_int=True)
+
         temp_pred_df = pd.DataFrame(
             data={
                 self.columns[0]: pd.date_range(max(actual_df.index),freq='D',periods=self.n_pred_period+1)[1:],
@@ -285,11 +285,12 @@ class TSFM(object):
         print("Applying anomaly filter...")
         df = df.copy()
         train = df.iloc[lambda x: x.index <= self.stop_date]
+        stop_date = max(train.index)
         returning_ic_list = list()
-        (start_p, start_d, start_q) = (0, 1, 0)
-        (max_p, max_d, max_q) = (4, 2, 5)
-        (start_P, start_D, start_Q) = (0, 1, 0)
-        (max_P, max_D, max_Q) = (2, 2, 4)
+        (start_p, start_d, start_q) = self.start_order
+        (max_p, max_d, max_q) = self.max_order
+        (start_P, start_D, start_Q) = self.start_seasonal_order
+        (max_P, max_D, max_Q) = self.max_seasonal_order
         for i in range(train.shape[0], df.shape[0], n_rolling_period):
             arima_model = pmdarima.auto_arima(train[train.columns[0]],
                                                 start_p=start_p, start_P=start_P,
@@ -298,7 +299,7 @@ class TSFM(object):
                                                 max_p=max_p, max_P=max_P,
                                                 max_d=max_d, max_D=max_D,
                                                 max_q=max_q, max_Q=max_Q,
-                                                trace=True, m=12, stepwise=False)
+                                                trace=True, m=self.cycle_length, stepwise=self.stepwise)
             temp_actual_df = df.iloc[i:min(i+n_rolling_period, df.shape[0]), :].copy()
             temp_pred, ic_list = arima_model.predict(n_rolling_period, return_conf_int=True, alpha=alpha)
             for j in range(temp_actual_df.shape[0]):
@@ -317,7 +318,7 @@ class TSFM(object):
                     'lower': returning_ic_list[:, 0],
                     'upper': returning_ic_list[:, 1],
                 },
-                index=pd.date_range(self.stop_date,freq='MS',periods=returning_ic_list.shape[0]+1)[1:]
+                index=pd.date_range(stop_date,freq='MS',periods=returning_ic_list.shape[0]+1)[1:]
             )
             return train.copy(), ic_df
         return train.copy()
@@ -358,16 +359,16 @@ class TSFM(object):
         print("Average MAE = {}".format(np.mean(MAE)))
         print("Average MAPE = {}".format(np.mean(MAPE)))
 
-    def __train_models(self, section: str) -> tuple:
-        # (start_p, start_d, start_q) = self.start_order
-        # (max_p, max_d, max_q) = self.max_order
-        # (start_P, start_D, start_Q) = self.start_seasonal_order
-        # (max_P, max_D, max_Q) = self.max_seasonal_order
+    def __train_models(self, section: str, is_log_transformed: bool) -> tuple:
+        (start_p, start_d, start_q) = self.start_order
+        (max_p, max_d, max_q) = self.max_order
+        (start_P, start_D, start_Q) = self.start_seasonal_order
+        (max_P, max_D, max_Q) = self.max_seasonal_order
     
         print("Inspecting", section, "...")
-        temp_actual_df = self.get_actual_data(section=section, is_adjusted=False, is_log_transformed=self.is_log_transformed_dict[section])
-        temp_adjusted_actual_df = self.get_actual_data(section=section, is_adjusted=True, is_log_transformed=self.is_log_transformed_dict[section])
-        if temp_actual_df.shape[0] >= 2 * 12:
+        temp_actual_df = self.get_actual_data(section=section, is_adjusted=False, is_log_transformed=is_log_transformed)
+        temp_adjusted_actual_df = self.get_actual_data(section=section, is_adjusted=True, is_log_transformed=is_log_transformed)
+        if temp_actual_df.shape[0] >= 2 * self.cycle_length:
             # train actual data
             print("Training", temp_actual_df.shape[0], "actual records ...")
             model_wrapper = copy.copy(self.model_wrapper)

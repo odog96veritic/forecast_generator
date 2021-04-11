@@ -1,5 +1,21 @@
 # flake8: noqa: E501
 
+import numpy as np
+from numpy.core.fromnumeric import mean
+import pandas as pd
+from pandas.core.indexes.api import get_objs_combined_axis
+import pmdarima
+from datetime import datetime
+import typing
+from matplotlib import pyplot as plt
+import matplotlib.dates as mdates
+from sklearn.model_selection import TimeSeriesSplit
+from sklearn.metrics import mean_absolute_error, mean_absolute_percentage_error # upgrade to the the latest scikit-learn pip install -U scikit-learn
+import random
+import copy
+
+from abc import ABC, abstractmethod
+
 class ModelWrapper(ABC):
     def __init__(self, **kwargs):
         try:
@@ -45,21 +61,7 @@ class KerasWrapper(ModelWrapper):
         super().__init__(**kwargs)
 
 
-import numpy as np
-from numpy.core.fromnumeric import mean
-import pandas as pd
-from pandas.core.indexes.api import get_objs_combined_axis
-import pmdarima
-from datetime import datetime
-import typing
-from matplotlib import pyplot as plt
-import matplotlib.dates as mdates
-from sklearn.model_selection import TimeSeriesSplit
-from sklearn.metrics import mean_absolute_error, mean_absolute_percentage_error # upgrade to the the latest scikit-learn pip install -U scikit-learn
-import random
-import copy
 
-from abc import ABC, abstractmethod
 
 ## Changes to be made
 ## 1 would like to add an argument 
@@ -174,7 +176,7 @@ class TSFM(object):
         return actual_df.iloc[lambda x: x.index <= self.stop_date].copy()
 
     def get_test_data(self, section: str, ):
-        actual_df = self.get_actual_data(section)
+        actual_df = self.get_actual_data(section, is_adjusted=False)
         return actual_df.iloc[lambda x: x.index > self.stop_date].copy()
 
     def get_pred_data(self, section: str, is_adjusted: bool, return_conf_int: bool = False):
@@ -212,11 +214,11 @@ class TSFM(object):
         if model is None:
             print("Model of", section, "section was not initiated. Might due to insufficient training data.")
             return None
-        pred,  = model.predict(self.n_pred_period)
+        pred  = model.predict(self.n_pred_period)
         conf_int = model.get_conf_int(self.n_pred_period)
         temp_pred_df = pd.DataFrame(
             data={
-                self.columns[0]: pd.date_range(max(actual_df.index),freq='D',periods=self.n_pred_period+1)[1:],
+                self.columns[0]: pd.date_range(max(actual_df.index),freq=freq,periods=self.n_pred_period+1)[1:],
                 self.columns[1]: [section for x in range(len(pred))],
                 self.columns[-1]: pred})  # Use numbers inplace of future dates for now)
         temp_pred_df = temp_pred_df[[self.columns[0], self.columns[2]]]
@@ -301,6 +303,7 @@ class TSFM(object):
                                                 trace=True, m=12, stepwise=False)
             temp_actual_df = df.iloc[i:min(i+n_rolling_period, df.shape[0]), :].copy()
             temp_pred, ic_list = arima_model.predict(n_rolling_period, return_conf_int=True, alpha=alpha)
+            print("ic_list", ic_list)
             for j in range(temp_actual_df.shape[0]):
                 temp_actual = temp_actual_df.iloc[j, 0]
                 ic = ic_list[j]
@@ -312,6 +315,7 @@ class TSFM(object):
         train = train.asfreq('MS')
         if return_conf_int:
             returning_ic_list = np.array(returning_ic_list)
+            print("returning_ic_list", returning_ic_list)
             ic_df = pd.DataFrame(
                 data={
                     'lower': returning_ic_list[:, 0],

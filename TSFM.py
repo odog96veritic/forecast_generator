@@ -57,15 +57,23 @@ class AutoArimaWrapper(ModelWrapper):
         return conf_int
 
 class KerasWrapper(ModelWrapper):
+    # WIP
     def __init__(self, **kwargs):
+        self.__kwargs = kwargs
         super().__init__(**kwargs)
 
+    def fit(self, y: typing.Union[list, np.array]):
+        kwargs = self.__kwargs.copy()
+        try:
+            kwargs.pop('y')
+        except:
+            pass
+        self.__model = pmdarima.auto_arima(y=y, **kwargs)
+    
+    def predict(self, *args, **kwargs):
+        return self.__model.predict(*args, **kwargs)
 
-
-
-## Changes to be made
-## 1 would like to add an argument 
-
+        
 class TSFM(object):
     def __init__(self,
                  df: pd.core.frame.DataFrame, #df is now daily data
@@ -74,9 +82,9 @@ class TSFM(object):
                  target_variable: typing.Union[int, str],
                  value_variable: typing.Union[int, str],
                  stop_date: str,         # stop date of train set, to split df to train and test sets
-                 model_wrapper: ModelWrapper,
                  input_is_monthly: bool, 
                  output_is_monthly: bool,
+                 model_wrapper: ModelWrapper = None,
                  section_list: list = None,
                  alpha: float = 0.05,):
                 #  stepwise: bool = True,
@@ -123,6 +131,10 @@ class TSFM(object):
             return
         self.df = df.copy()
 
+        if self.model_wrapper is None:
+            print("Model wrapper is None, no model is trained.")
+            return
+
         # keys: sections(territories), value: list(train, test, pred), for easy storing and fetching data
         self.df_dict = dict()
         self.model_dict = dict()
@@ -155,15 +167,18 @@ class TSFM(object):
         '''
         agg_df = self.df[self.columns].groupby(self.columns[0:2], as_index=False).sum().copy()
         agg_df = agg_df.query(self.columns[1] + "==" + "'" + section + "'")[[self.columns[0], self.columns[2]]]
-        agg_df.set_index(self.columns[0], inplace=True)
+        # agg_df.set_index(self.columns[0], inplace=True)
         if not self.input_is_monthly and self.output_is_monthly:
             full_daily_df, remainder_daily_df = self.get_full_month_data(df=agg_df.copy())
-            agg_df = TSFM.to_monthly(full_daily_df)
+            agg_df = TSFM.to_monthly(full_daily_df.set_index(self.columns[0], inplace=False)).reset_index(inplace=False)
         if is_adjusted and self.output_is_monthly:
             agg_df = self.anomaly_filter(agg_df, alpha = self.alpha)
         if is_log_transformed is None:
-            is_log_transformed = self.is_log_transformed_dict[section]
-        if is_log_transformed:
+            try:
+                is_log_transformed = self.is_log_transformed_dict[section]
+            except:
+                is_log_transformed = False
+        if is_log_transformed and self.model_wrapper is not None:
             agg_df = TSFM.log_transform(agg_df)
         return agg_df
 
@@ -190,7 +205,7 @@ class TSFM(object):
         return pred
 
     def get_full_month_data(self, df):
-        max_date = df.index.max()
+        max_date = df[self.columns[0]].max()
         if self.__is_last_day_of_month(max_date):
             return df, None
         new_date =  max_date.year + '-' + max_date.month + '-' + max_date.day
@@ -218,11 +233,11 @@ class TSFM(object):
         conf_int = model.get_conf_int(self.n_pred_period)
         temp_pred_df = pd.DataFrame(
             data={
-                self.columns[0]: pd.date_range(max(actual_df.index),freq=freq,periods=self.n_pred_period+1)[1:],
+                self.columns[0]: pd.date_range(max(actual_df[self.columns[0]]),freq=freq,periods=self.n_pred_period+1)[1:],
                 self.columns[1]: [section for x in range(len(pred))],
                 self.columns[-1]: pred})  # Use numbers inplace of future dates for now)
         temp_pred_df = temp_pred_df[[self.columns[0], self.columns[2]]]
-        temp_pred_df.set_index(self.columns[0], inplace=True)
+        # temp_pred_df.set_index(self.columns[0], inplace=True)
         if self.is_log_transformed_dict[section]:
             temp_pred_df = self.exp_transform(temp_pred_df)
         if return_conf_int:
@@ -239,7 +254,7 @@ class TSFM(object):
             adjusted_actual_pred = self.get_pred_data(section, is_adjusted=True)
             pred = pd.DataFrame(data={actual_pred.columns[0]: actual_pred[actual_pred.columns[0]].to_numpy(), "value2": adjusted_actual_pred[adjusted_actual_pred.columns[0]].to_numpy()},
                                 index = actual_pred.index)
-            pred.reset_index(inplace=True)
+            # pred.reset_index(inplace=True)
             pred[self.target_variable] = [section for x in range(pred.shape[0])]
             return_df = return_df.append(pred, ignore_index=True)
         return_df.sort_values(by=[self.columns[1], self.columns[0]], inplace=True, ignore_index=True)
@@ -255,10 +270,17 @@ class TSFM(object):
     def plot(self, section: str):
         actual = self.get_actual_data(section, is_adjusted=False)
         adjusted_actual, conf_int_df = self.anomaly_filter(actual, return_conf_int=True, alpha = self.alpha)
+
+        actual.set_index(self.columns[0], inplace=True)
+        adjusted_actual.set_index(self.columns[0], inplace=True) 
+        conf_int_df.set_index(self.columns[0], inplace=True)
         # pred, ci = self.get_pred_data(section, return_conf_int=True)
 
         actual_pred = self.get_pred_data(section, is_adjusted=False)
         adjusted_actual_pred = self.get_pred_data(section, is_adjusted=True)
+
+        actual_pred.set_index(self.columns[0], inplace=True)
+        adjusted_actual_pred.set_index(self.columns[0], inplace=True)
 
         fig, ax = plt.subplots(figsize=(14,6))
         ax.plot(actual.index, actual[actual.columns[0]].to_numpy(),label="Actual")   #Actuals This should come from original DS (all actuals)
@@ -286,6 +308,7 @@ class TSFM(object):
                        alpha: float = 0.05):
         print("Applying anomaly filter...")
         df = df.copy()
+        df.set_index(self.columns[0], inplace=True)
         train = df.iloc[lambda x: x.index <= self.stop_date]
         returning_ic_list = list()
         (start_p, start_d, start_q) = (0, 1, 0)
@@ -300,7 +323,7 @@ class TSFM(object):
                                                 max_p=max_p, max_P=max_P,
                                                 max_d=max_d, max_D=max_D,
                                                 max_q=max_q, max_Q=max_Q,
-                                                trace=True, m=12, stepwise=False)
+                                                trace=True, m=12, stepwise=True)
             temp_actual_df = df.iloc[i:min(i+n_rolling_period, df.shape[0]), :].copy()
             temp_pred, ic_list = arima_model.predict(n_rolling_period, return_conf_int=True, alpha=alpha)
             print("ic_list", ic_list)
@@ -321,10 +344,10 @@ class TSFM(object):
                     'lower': returning_ic_list[:, 0],
                     'upper': returning_ic_list[:, 1],
                 },
-                index=pd.date_range(self.stop_date,freq='MS',periods=returning_ic_list.shape[0]+1)[1:]
+                index=pd.Index(data=pd.date_range(self.stop_date,freq='MS',periods=returning_ic_list.shape[0]+1)[1:], name=self.columns[0])
             )
-            return train.copy(), ic_df
-        return train.copy()
+            return train.reset_index(inplace=False).copy(), ic_df.reset_index(inplace=False).copy()
+        return train.reset_index(inplace=False).copy()
     
     def cross_validate(self,section: str, is_adjusted: bool):
         actual_df = self.get_actual_data(section, is_adjusted)

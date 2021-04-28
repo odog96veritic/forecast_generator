@@ -197,9 +197,9 @@ class TSFM(object):
     def get_pred_data(self, section: str, is_adjusted: bool, return_conf_int: bool = False):
         pred, ic = None, None
         if is_adjusted:
-            pred, ic = self.adjusted_pred_dict[section], self.adjusted_pred_ic_dict[section]
+            pred, ic = self.adjusted_pred_dict[section].copy(), self.adjusted_pred_ic_dict[section].copy()
         else:
-            pred, ic = self.pred_dict[section], self.pred_ic_dict[section]
+            pred, ic = self.pred_dict[section].copy(), self.pred_ic_dict[section].copy()
         if return_conf_int:
             return pred, ic
         return pred
@@ -252,10 +252,12 @@ class TSFM(object):
         for section in self.section_list:
             actual_pred = self.get_pred_data(section, is_adjusted=False)
             adjusted_actual_pred = self.get_pred_data(section, is_adjusted=True)
-            pred = pd.DataFrame(data={actual_pred.columns[0]: actual_pred[actual_pred.columns[0]].to_numpy(), "value2": adjusted_actual_pred[adjusted_actual_pred.columns[0]].to_numpy()},
-                                index = actual_pred.index)
+            pred = pd.DataFrame(data={self.columns[0]: actual_pred[self.columns[0]].to_numpy(),
+                                      self.target_variable: [section for x in range(actual_pred.shape[0])],
+                                      self.columns[2]: actual_pred[self.columns[2]].to_numpy(), 
+                                      "value2": adjusted_actual_pred[self.columns[2]].to_numpy()})
             # pred.reset_index(inplace=True)
-            pred[self.target_variable] = [section for x in range(pred.shape[0])]
+            # pred[self.target_variable] = [section for x in range(pred.shape[0])]
             return_df = return_df.append(pred, ignore_index=True)
         return_df.sort_values(by=[self.columns[1], self.columns[0]], inplace=True, ignore_index=True)
         return return_df
